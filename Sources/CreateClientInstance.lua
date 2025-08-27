@@ -1,0 +1,383 @@
+--!native
+
+----[ Made by DuckTheDir , 2025 ]----
+
+-- Services
+local collectService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
+local Plr = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+
+-- center of Culling
+local Character = Plr.Character or Plr.CharacterAdded:Wait()
+
+local root = Character:WaitForChild("HumanoidRootPart")
+
+local CullingCenters = {}
+
+
+
+local cullingConnection:RBXScriptConnection
+local centerCullingAssgnerConnection:RBXScriptConnection
+
+local instCreator = {}
+
+instCreator.storage = {} -- storage of created instances
+instCreator.savedProperties = {} -- storage of saved properties of Instance
+
+instCreator.useCharacterRoot = true -- set to false if you don't want to use character root for culling
+
+local function checkForCullingRoot()
+	if instCreator.useCharacterRoot == false then
+		local CullingRoot =table.find(CullingCenters,root)
+		if CullingRoot then
+			table.remove(CullingCenters,table.find(CullingCenters,CullingRoot))
+		end
+	else
+		if not table.find(CullingCenters,root) then
+			table.insert(CullingCenters,root)
+		end
+	end
+end
+
+-- Storage functions
+
+-- adds instance to the storage
+function instCreator.addInstance(Inst:Instance)
+	if table.find(instCreator.storage,Inst) then return end
+	table.insert(instCreator.storage,Inst)
+	local sp = createSavedProperties(Inst)
+	if Inst:IsA("Model") then
+		sp.IsModel = true
+	end
+end
+
+-- gets array of instances from the storage
+function instCreator.getInstances()
+	local instances = {}
+	for _, inst in instCreator.storage do
+		if inst:IsA("Instance") and not table.find(instances,inst) then
+			table.insert(instances,inst)
+		end
+	end
+	return instances
+end
+
+-- removes Instance from the storage , but doesn't destroy it
+function instCreator.removeInstance(inst:Instance)
+	if inst:IsA("Instance") then
+		table.remove(instCreator.storage,table.find(instCreator.storage,inst))
+		instCreator.savedProperties[inst] = nil
+	end
+end
+
+local function savePosition(inst:Instance)
+	createSavedProperties(inst)
+	if inst:IsA("Model") then
+		instCreator.savedProperties[inst].Position = inst:GetPivot().Position
+	elseif inst:IsA("BasePart") then
+		instCreator.savedProperties[inst].Position = inst.Position
+	end
+end
+
+local function saveParent(inst:Instance)
+	createSavedProperties(inst)
+	if inst:IsA("Model") or inst:IsA("BasePart") then
+		instCreator.savedProperties[inst].Parent = inst.Parent
+	end
+end
+
+
+
+function createSavedProperties(inst:Instance)
+	if inst:IsA("Model") or inst:IsA("BasePart") then
+		if not instCreator.savedProperties[inst] then
+			instCreator.savedProperties[inst] = {}
+			savePosition(inst)
+			saveParent(inst)
+			return instCreator.savedProperties[inst]
+		end
+	end
+end
+
+-- clears storage of saved Instances and its properties , also destroys the instances
+function instCreator.clearStorage()
+	for _, inst in instCreator.storage do
+		if inst and inst.Parent then
+			inst:Destroy()
+		end
+	end
+	instCreator.storage = {}
+	instCreator.savedProperties = {}
+end
+---------------------------------------------------------
+
+
+-- Create functions
+
+-- creates Instance from scratch 
+function instCreator.Create(properties)
+	local inst = Instance.new(properties.type)
+	local InstProperties = properties.InstanceProperties
+	
+	if inst or InstProperties then
+		for i, v in InstProperties do
+			local success, err = pcall(function() -- pcall to catch failed assigns to properties
+				inst[i] = v
+			end)
+			if not success then
+				warn("Property "..i.." does not exist in "..inst.ClassName..": "..err)
+			end
+		end
+		instCreator.addInstance(inst)
+	else
+		warn("Did you forgot to add 'type' or 'InstanceProperties'? ")
+	end
+	
+	return inst
+end
+---------------------------------------------------------
+
+-- Check for available Instances that was premade in workspace
+
+local whitelist = { -- whitelist for premade instances, you can add more
+	"MeshPart",
+	"UnionOperation",
+	"Model",
+	"Part",
+	"Sound",
+}
+
+
+local function processInstance(c) -- function to process Instances that was premade in workspace
+	if c:IsA("ModuleScript") then
+		local props:ModuleScript = c
+		local propsModule = require(props)
+		if propsModule.type then -- checks if Module only contains 1 Instance
+			if table.find(whitelist,propsModule.type) then -- checks if Class of the Instance is whitelisted
+				local inst = instCreator.Create(propsModule)
+				local sp = createSavedProperties(inst)
+				if inst:IsA("Model") then
+					sp.IsModel = true
+				end
+				if propsModule.cleanParent == true then -- checks if module has "cleanParent" property set to true
+					c.Parent:Destroy()
+				else
+					c:Destroy()
+				end
+			end
+		else
+			for i, v in propsModule do -- checks if Module contains multiple Instances
+				if table.find(whitelist,v.type) then -- checks if Class of the Instance is whitelisted
+					instCreator.Create(v)
+				end
+			end
+			-- doesn't check for "cleanparent" property because of multiple Instances
+			c:Destroy()
+		end
+	end
+end
+
+-- creates premade Instances if their class is in the whitelist.
+function instCreator.check()
+	for _, c in collectService:GetTagged("Instance") do
+		processInstance(c)
+
+	end
+end
+
+-- assign a culling center for Client instances
+function instCreator.assignCenterOfCulling(Inst:Instance)
+	if Inst:IsA("BasePart") then
+		if not table.find(CullingCenters,Inst) then
+			table.insert(CullingCenters,Inst)
+		end
+	end
+end
+
+-- remove a culling center for Client instances
+function instCreator.removeCenterOfCulling(Inst:Instance)
+	if Inst:IsA("BasePart") then
+		if table.find(CullingCenters,Inst) then
+			table.remove(CullingCenters,table.find(CullingCenters,Inst))
+		end
+	end
+end
+
+-- [ removes all culling centers , but will add back the player character's root part 
+-- if useCharacterRoot is set to true ]
+function instCreator.clearCentersOfCulling()
+	CullingCenters = {}
+	if instCreator.useCharacterRoot == true then
+		if not table.find(CullingCenters,root) then
+			table.insert(CullingCenters,root)
+		end
+	end
+end
+---------------------------------------------------------
+
+-- Models and BaseParts Cullings
+
+-- starts culling of client Instances : {Model,BaseParts}
+function instCreator.startCulling()
+	if centerCullingAssgnerConnection then return end
+	
+	if instCreator.useCharacterRoot == true then
+		centerCullingAssgnerConnection = Plr.CharacterAdded:Connect(function(char)
+			if char then
+				root = char:WaitForChild("HumanoidRootPart")
+				table.insert(CullingCenters,root)
+			end
+		end)
+	end
+	
+	if cullingConnection then return end
+	-- Chunk configs
+	local checkInterval = 0.32
+	local lastAcc = 0
+	local radius = 100
+	local radiusSq = radius * radius
+
+	local processIndex = 1
+	local chunkSize = 60 -- number of instances processed per check, tune this for target hardware
+	local fullCompactInterval = 10
+	local compactTimer = 0
+	
+	checkForCullingRoot()
+	
+	local movementThresholdSq = 2 * 2 -- 2 studs threshold
+	
+	local centerLastPosMap = {}
+	
+	cullingConnection = RunService.Heartbeat:Connect(function(dt)
+		lastAcc = lastAcc + dt
+		compactTimer = compactTimer + dt
+		if lastAcc < checkInterval then return end
+		lastAcc = 0
+
+		local center = root.Position
+		local cx, cy, cz = center.X, center.Y, center.Z
+
+		if compactTimer >= fullCompactInterval then
+			compactTimer = 0
+		end
+
+		if #instCreator.storage == 0 then return end
+		if #CullingCenters == 0 then return end
+		local checkId = 0
+		checkId += 1
+
+
+		for _, centerCulling in ipairs(CullingCenters) do
+			local centerPoint = centerCulling.Position
+			local lastCenterPos = centerLastPosMap[centerCulling] or centerPoint
+			local movedSq = (centerPoint - lastCenterPos):Dot(centerPoint - lastCenterPos)
+			local currentChunk = chunkSize
+			if movedSq > movementThresholdSq then
+				currentChunk = math.min(#instCreator.storage, chunkSize * 3)
+				centerLastPosMap[centerCulling] = centerPoint
+			end
+			for _ = 1, currentChunk do
+				if processIndex > #instCreator.storage then processIndex = 1 end
+				local inst = instCreator.storage[processIndex]
+				processIndex = processIndex + 1
+				if inst then
+					local sp = instCreator.savedProperties[inst] or createSavedProperties(inst)
+					if sp and sp.Position then
+						local inAnyCenter = false
+						for _, cC in ipairs(CullingCenters) do
+							local cpos = cC.Position
+							local dx = sp.Position.X - cpos.X
+							local dy = sp.Position.Y - cpos.Y
+							local dz = sp.Position.Z - cpos.Z
+							local dSq = dx*dx + dy*dy + dz*dz
+							if dSq <= radiusSq then
+								inAnyCenter = true
+								break
+							end
+						end
+
+						if inAnyCenter then
+							if not sp.InRange then
+								sp.InRange = true
+								if inst.Parent == nil then
+									inst.Parent = (sp.Parent or workspace)
+								end
+								if sp.IsModel then
+									local success = pcall(function()
+										inst:PivotTo(Vector3.new(sp.Position))
+									end)
+									if not success then
+										savePosition(inst, sp)
+									end
+								else
+									if inst.Position ~= sp.Position then
+										pcall(function() inst.Position = sp.Position end)
+									end
+								end
+							end
+							sp.CullingCenter = true
+							sp.lastChecked = checkId
+						else
+							if sp.InRange ~= false then
+								sp.InRange = false
+								if sp.IsModel then
+									local pivot
+									local success = pcall(function()
+										pivot = inst:GetPivot().Position
+									end)
+									if success and pivot and pivot ~= sp.Position then
+										sp.Position = pivot
+									end
+								else
+									if inst and inst.Position and inst.Position ~= sp.Position then
+										sp.Position = inst.Position
+									end
+								end
+								if inst.Parent ~= sp.Parent then
+									sp.Parent = inst.Parent
+								end
+								if inst.Parent ~= nil then
+									inst.Parent = nil
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+
+		for _, inst in ipairs(instCreator.storage) do
+			local sp = instCreator.savedProperties[inst]
+			if sp then
+				if sp.lastChecked ~= checkId then
+					sp.CullingCenter = false
+				end
+			end
+		end
+	end)
+end
+
+-- stops culling of client Instances
+function instCreator.stopCulling()
+	if cullingConnection then 
+		cullingConnection:Disconnect()
+		for _, inst in ipairs(instCreator.storage) do
+			local props = instCreator.savedProperties[inst]
+			if props then
+				if props.Parent and inst.Parent ~= props.Parent then
+					inst.Parent = props.Parent
+				end
+				if props.Position and inst.Position ~= props.Position then
+					inst.Position = props.Position
+				end
+			end
+		end
+	end
+end
+
+
+---------------------------------------------------------
+	
+
+return instCreator
