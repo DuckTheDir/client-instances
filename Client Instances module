@@ -358,6 +358,17 @@ end
 function instCreator.stopCulling()
 	if cullingConnection then 
 		cullingConnection:Disconnect()
+		for _, inst in ipairs(instCreator.storage) do
+			local props = instCreator.savedProperties[inst]
+			if props then
+				if props.Parent and inst.Parent ~= props.Parent then
+					inst.Parent = props.Parent
+				end
+				if props.Position and inst.Position ~= props.Position then
+					inst.Position = props.Position
+				end
+			end
+		end
 	end
 end
 
